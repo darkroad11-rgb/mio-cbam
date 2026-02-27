@@ -76,8 +76,13 @@ totale = costo_unitario * volume
 st.markdown("---")
 st.header("Risultato dell'Analisi")
 c1, c2, c3 = st.columns(3)
-c1.metric("Costo per Ton", f"{costo_unitario:.2f} €")
-c2.metric("Costo Totale CBAM", f"{totale:,.2/2} €".replace(',', '.'))
+
+# Formattazione italiana (Punto per migliaia, virgola per decimali)
+costo_unitario_ita = f"{costo_unitario:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+totale_ita = f"{totale:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+c1.metric("Costo per Ton", f"{costo_unitario_ita} €")
+c2.metric("Costo Totale CBAM", f"{totale_ita} €")
 c3.metric("Emissioni Tassabili", f"{tassabile_per_ton:.3f} t/CO2")
 
-st.info(f"**Nota:** Questo calcolo si basa sulla formula standard CBAM per merci semplici. Nel {anno} pagherai il {round((1-free_allowance)*100, 1)}% dell'impatto totale.")
+st.info(f"**Nota:** Questo calcolo si basa sulla formula standard CBAM (D4 - (D5 * D6)) * D8. Nel {anno} la quota gratuita è del {free_allowance*100}%.")
