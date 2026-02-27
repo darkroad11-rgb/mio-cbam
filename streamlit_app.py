@@ -1,16 +1,30 @@
 import streamlit as st
 import pandas as pd
+import re
 
 # Configurazione Pagina
 st.set_page_config(page_title="CBAM Calculator PRO", layout="wide")
 
-st.title("calc 🌍 CBAM Calculator PRO")
-st.subheader("Strumento professionale per il calcolo dei certificati CBAM (2026-2034)")
+st.title("🌍 CBAM Calculator PRO")
+st.subheader("Calcolo basato su Regolamento UE 2023/956")
+
+# Funzione per pulire i numeri (gestisce virgole e parentesi)
+def clean_val(val):
+    if pd.isna(val) or val == "" or str(val).strip().lower() == "n/a":
+        return None
+    try:
+        # Estrae solo il numero, gestendo la virgola italiana
+        match = re.search(r"(\d+,\d+|\d+\.\d+|\d+)", str(val))
+        if match:
+            return float(match.group(1).replace(',', '.'))
+    except:
+        return None
+    return None
 
 # --- CARICAMENTO DATI ---
 @st.cache_data
 def load_data():
-    # Carichiamo i tuoi file (assicurati che siano nella stessa cartella del file .py)
+    # Carichiamo i tuoi file CSV puliti o originali
     df_bench = pd.read_csv('database_benchmarks_pulito.csv')
     df_def = pd.read_csv('database_defaults_pulito.csv')
     return df_bench, df_def
@@ -18,71 +32,89 @@ def load_data():
 try:
     df_bench, df_def = load_data()
 except:
-    st.error("⚠️ Errore: Carica i file CSV (database_benchmarks_pulito.csv e database_defaults_pulito.csv) nella stessa cartella.")
+    st.error("⚠️ Carica i file CSV sul tuo GitHub per far funzionare il calcolatore.")
     st.stop()
 
 # --- SIDEBAR: PARAMETRI DI MERCATO ---
 st.sidebar.header("Parametri Globali")
 prezzo_ets = st.sidebar.number_input("Prezzo Medio ETS (€)", value=81.0)
-anno = st.sidebar.selectbox("Anno di riferimento", [2026, 2027, 2028, 2029, 2030, 2034])
+anno = st.sidebar.selectbox("Anno di riferimento", [2026, 2027, 2028, 2029, 2030])
 
-# Logica Free Allowance basata sull'anno (D6)
-allowance_map = {2026: 0.975, 2027: 0.95, 2028: 0.90, 2029: 0.825, 2030: 0.75, 2034: 0.0}
+# Mapping Free Allowance (D6)
+allowance_map = {2026: 0.975, 2027: 0.95, 2028: 0.90, 2029: 0.825, 2030: 0.75}
 free_allowance = allowance_map[anno]
-st.sidebar.write(f"Free Allowance ({anno}): **{free_allowance*100}%**")
 
-# --- MAIN: INPUT UTENTE ---
+# Selezione Colonna Default in base all'anno
+col_year = {
+    2026: "2026 Default Value (Including mark-up)",
+    2027: "2027 Default Value (Including mark-up)",
+    2028: "2028 Default Value (Including mark-up)",
+    2029: "2028 Default Value (Including mark-up)", # Fallback 2028+
+    2030: "2028 Default Value (Including mark-up)"
+}
+default_col_name = col_year[anno]
+
+# --- MAIN: INPUT ---
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown("### 1. Dettagli Merce")
-    hs_search = st.text_input("Inserisci Codice HS (es. 7203 o 72024910)")
-    volume = st.number_input("Volume Importato (Tonnellate)", min_value=1.0, value=150.0)
+    st.markdown("### 1. Prodotto e Benchmark (D5)")
+    hs_search = st.text_input("Inserisci Codice HS (es. 7203)", value="7203")
+    volume = st.number_input("Volume (Tonnellate)", value=150.0)
     
     # Ricerca Benchmark (D5)
-    bench_match = df_bench[df_bench['CN code'].astype(str).str.contains(hs_search)] if hs_search else pd.DataFrame()
-    
+    bench_match = df_bench[df_bench['CN code'].astype(str).str.startswith(hs_search[:4])]
     if not bench_match.empty:
-        benchmark_val = bench_match.iloc[0]['Benchmark_Value']
+        benchmark_val = clean_val(bench_match.iloc[0]['Benchmark_Value'])
         st.success(f"Benchmark D5 trovato: {benchmark_val}")
     else:
-        benchmark_val = st.number_input("Benchmark (D5) manuale", value=1.142)
+        benchmark_val = st.number_input("Inserisci Benchmark (D5) manualmente", value=1.142)
 
 with col2:
     st.markdown("### 2. Emissioni (D4)")
-    usa_default = st.checkbox("Non conosco le emissioni (Usa Valori di Default)")
+    usa_default = st.checkbox("Usa Valori di Default (se non hai dati reali)")
     
     if usa_default:
-        paesi = df_def['Country'].unique()
-        paese_scelto = st.selectbox("Seleziona Paese di Origine", paesi)
+        paesi = sorted(df_def['Country'].unique())
+        paese_scelto = st.selectbox("Paese di Origine", paesi)
         
-        def_match = df_def[(df_def['Country'] == paese_scelto) & (df_def['Product CN Code'].astype(str).str.contains(hs_search[:4]))]
-        if not def_match.empty:
-            emissioni_d4 = def_match.iloc[0]['Default Value (direct emissions)']
-            st.info(f"Default D4 per {paese_scelto}: {emissioni_d4}")
-        else:
-            emissioni_d4 = 1.325 # Fallback mondiale
-            st.warning(f"Usando fallback mondiale: {emissioni_d4}")
+        # Logica di ricerca Default (D4)
+        # Filtro per Paese e HS
+        def_row = df_def[(df_def['Country'] == paese_scelto) & (df_def['Product CN Code'].astype(str).str.startswith(hs_search[:4]))]
+        
+        # Se vuoto o valore nullo, cerca in "Other Countries and Territories"
+        val_d4 = None
+        if not def_row.empty:
+            val_d4 = clean_val(def_row.iloc[0][default_col_name])
+        
+        if val_d4 is None:
+            st.warning("Valore non trovato per questo paese. Ricerca nei valori globali...")
+            fallback_row = df_def[(df_def['Country'].str.contains("Other", na=False)) & (df_def['Product CN Code'].astype(str).str.startswith(hs_search[:4]))]
+            if not fallback_row.empty:
+                val_d4 = clean_val(fallback_row.iloc[0][default_col_name])
+        
+        emissioni_d4 = val_d4 if val_d4 is not None else 1.325
+        st.info(f"D4 applicato ({anno}): {emissioni_d4}")
     else:
         emissioni_d4 = st.number_input("Inserisci Emissioni Reali (D4)", value=1.5)
 
-# --- CALCOLO (La tua Formula) ---
+# --- CALCOLO (Tua Formula Corretta) ---
 # Formula: (D4 - (D5 * D6)) * D8
 tassabile_per_ton = emissioni_d4 - (benchmark_val * free_allowance)
 costo_unitario = max(0.0, tassabile_per_ton * prezzo_ets)
-totale = costo_unitario * volume
+totale_pagare = costo_unitario * volume
 
-# --- DISPLAY RISULTATI ---
+# --- RISULTATI ---
 st.markdown("---")
-st.header("Risultato dell'Analisi")
-c1, c2, c3 = st.columns(3)
+st.header("Analisi Economica CBAM")
+r1, r2, r3 = st.columns(3)
 
-# Formattazione italiana (Punto per migliaia, virgola per decimali)
-costo_unitario_ita = f"{costo_unitario:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-totale_ita = f"{totale:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+# Formattazione italiana
+def format_ita(n):
+    return f"{n:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-c1.metric("Costo per Ton", f"{costo_unitario_ita} €")
-c2.metric("Costo Totale CBAM", f"{totale_ita} €")
-c3.metric("Emissioni Tassabili", f"{tassabile_per_ton:.3f} t/CO2")
+r1.metric("Costo / Ton", f"{format_ita(costo_unitario)} €")
+r2.metric("TOTALE DA PAGARE", f"{format_ita(totale_pagare)} €")
+r3.metric("Free Allowance", f"{free_allowance*100}%")
 
-st.info(f"**Nota:** Questo calcolo si basa sulla formula standard CBAM (D4 - (D5 * D6)) * D8. Nel {anno} la quota gratuita è del {free_allowance*100}%.")
+st.caption(f"Calcolo basato sulla colonna: {default_col_name} per il settore HS {hs_search[:4]}")
