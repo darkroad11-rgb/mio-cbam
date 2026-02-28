@@ -1,51 +1,79 @@
 import streamlit as st
 import pandas as pd
-import os
 
-st.set_page_config(page_title="Lux CBAM Pro - Debug Mode", layout="wide")
+st.set_page_config(page_title="Lux CBAM Pro", layout="wide")
 
+# Forza il caricamento senza errori di tipo
 @st.cache_data
 def load_data():
-    bench = pd.read_csv("benchmarks.csv")
-    defaults = pd.read_csv("defaults.csv")
-    
-    # Pulizia stringhe
-    bench['CN code'] = bench['CN code'].astype(str).str.split('.').str[0].str.strip()
-    defaults['Product CN Code'] = defaults['Product CN Code'].astype(str).str.split('.').str[0].str.strip()
-    defaults['Country'] = defaults['Country'].astype(str).str.strip()
-    
-    return bench, defaults
+    b = pd.read_csv("benchmarks.csv", dtype={'CN code': str, 'Route': str})
+    d = pd.read_csv("defaults.csv", dtype={'Product CN Code': str, 'Country': str})
+    return b, d
 
 st.title("🌍 Lux CBAM Calculator")
 
 try:
     bench_df, def_df = load_data()
-    
-    # --- SIDEBAR DEBUG ---
-    st.sidebar.header("🛠 Strumenti di Controllo")
-    debug_mode = st.sidebar.checkbox("Attiva Debug (Vedi dati interni)")
 
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns([1, 1])
+
     with col1:
-        countries = sorted([x for x in def_df['Country'].unique() if x != 'nan'])
-        country = st.selectbox("Paese di Origine", countries)
+        st.subheader("1. Selezione Merce")
+        paese = st.selectbox("Paese di Origine", sorted(def_df['Country'].unique()))
         
-        hs_codes = sorted(def_df[def_df['Country'] == country]['Product CN Code'].unique())
-        if not hs_codes: # Se il paese non ha codici, mostra tutti quelli disponibili
-             hs_codes = sorted(def_df['Product CN Code'].unique())
-             
-        hs_code = st.selectbox("Codice HS", hs_codes)
-        volume = st.number_input("Volume (Tonnellate)", value=1.0)
+        # Filtro codici HS
+        hs_list = sorted(def_df[def_df['Country'] == paese]['Product CN Code'].unique())
+        codice_hs = st.selectbox("Codice HS", hs_list)
+        
+        # Filtro Rotte
+        rotte_disponibili = bench_df[bench_df['CN code'] == codice_hs]['Route'].unique()
+        rotta = st.selectbox("Rotta / Periodo (-1=26/27, -2=28/30)", rotte_disponibili)
+        
+        ton = st.number_input("Tonnellate Importate", value=1.0)
 
     with col2:
-        ets = st.number_input("Prezzo ETS (€)", value=75.0)
-        use_real = st.toggle("Usa emissioni reali")
-        real_val = st.number_input("Emissione reale", value=0.0) if use_real else None
+        st.subheader("2. Parametri e Calcolo")
+        anno = st.selectbox("Anno", [2026, 2027, 2028])
+        prezzo_ets = st.number_input("Prezzo ETS (€)", value=80.0)
+        
+        reali = st.toggle("Usa emissioni reali fornitore")
+        val_reale = st.number_input("Emissione reale (tCO2/t)", value=0.0) if reali else 0.0
 
-    if st.button("Esegui Calcolo", type="primary"):
-        # --- LOGICA DI RICERCA EMISSIONI ---
-        em = None
-        source = ""
+    if st.button("CALCOLA TOTALE", type="primary", use_container_width=True):
+        # LOGICA EMISSIONE
+        if reali and val_reale > 0:
+            E = val_reale
+            col_bm = "BM_Real"
+        else:
+            riga_def = def_df[(def_df['Country'] == paese) & (def_df['Product CN Code'] == codice_hs)]
+            E = pd.to_numeric(riga_def[str(anno)].values[0], errors='coerce')
+            col_bm = "BM_Default"
+
+        # LOGICA BENCHMARK
+        riga_bm = bench_df[(bench_df['CN code'] == codice_hs) & (bench_df['Route'] == rotta)]
+        B = pd.to_numeric(riga_bm[col_bm].values[0], errors='coerce')
+
+        # FREE ALLOWANCE
+        FA = {2026: 0.975, 2027: 0.95, 2028: 0.90}.get(anno)
+
+        if pd.notna(E) and pd.notna(B):
+            # FORMULA
+            costo_un = (E - (B * FA)) * prezzo_ets
+            totale = max(0.0, costo_un * ton)
+
+            st.divider()
+            st.metric("TOTALE DA PAGARE", f"€ {totale:,.2f}")
+            
+            with st.expander("Vedi i passaggi del calcolo"):
+                st.write(f"- Emissione (E): {E}")
+                st.write(f"- Benchmark (B): {B}")
+                st.write(f"- Free Allowance (FA): {FA}")
+                st.write(f"**Formula:** ({E} - ({B} * {FA})) * {prezzo_ets} * {ton}")
+        else:
+            st.error("Dati mancanti nel CSV per questa combinazione. Controlla i file.")
+
+except Exception as e:
+    st.error(f"Errore: {e}")
         
         if use_real:
             em = real_val
@@ -85,4 +113,5 @@ try:
             if pd.isna(bm): st.warning(f"Manca il valore nel file **benchmarks.csv** per il codice {hs_code} nella colonna {bm_col}.")
 
 except Exception as e:
+
     st.error(f"Errore critico: {e}")
