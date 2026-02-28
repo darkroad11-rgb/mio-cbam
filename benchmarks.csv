@@ -1,8 +1,4 @@
-CN code,CN Description,"Column A
-BMg [tCO2e/t]","Column A
-Production route indicator","Column B
-BMg [tCO2e/t]","Column B
-Production route indicator"
+CN code,CN Description,Column A BMg [tCO2e/t],Column A Production route indicator,Column B BMg [tCO2e/t],Column B Production route indicator
 26011200,Agglomerated iron ores and concentrates (excl. roasted iron pyrites),0.086,,0.086,
 72011011,"Non-alloy pig iron in pigs, blocks or other primary forms, containing by weight <= 0,5% phosphorus, >= 0,4% manganese and <= 1% silicon",1.089,,1.21,
 72011019,"Non-alloy pig iron in pigs, blocks or other primary forms, containing by weight <= 0,5% phosphorus, >= 0,4% manganese and > 1% silicon",1.089,,1.21,
