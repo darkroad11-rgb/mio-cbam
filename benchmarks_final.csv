@@ -1,4 +1,4 @@
-CN code;CN Description;"Column A
+ï»¿CN code;CN Description;"Column A
 BMg [tCO2e/t]";"Column A
 Production route indicator";"Column B
 BMg [tCO2e/t]";"Column B
@@ -1225,10 +1225,10 @@ Production route indicator"
 ;;;;0,085;(E)
 73042400;Casing and tubing, seamless, of a kind used for drilling for oil or gas, of stainless steel;0,057;;1,173;(1)
 ;;;;1,135;(2)
-73042910;Casing and tubing of a kind used for drilling for oil or gas, seamless, of iron or steel, of an external diameter <= 168,3ÿmm (excl. products of cast iron);0,057;;1,383;(C)
+73042910;Casing and tubing of a kind used for drilling for oil or gas, seamless, of iron or steel, of an external diameter <= 168,3Â mm (excl. products of cast iron);0,057;;1,383;(C)
 ;;;;0,494;(D)
 ;;;;0,085;(E)
-73042930;Casing and tubing of a kind used for drilling for oil or gas, seamless, of iron or steel, of an external diameter > 168,3ÿmm, but <= 406,4 mm (excl. products of cast iron);0,057;;1,383;(C)
+73042930;Casing and tubing of a kind used for drilling for oil or gas, seamless, of iron or steel, of an external diameter > 168,3Â mm, but <= 406,4 mm (excl. products of cast iron);0,057;;1,383;(C)
 ;;;;0,494;(D)
 ;;;;0,085;(E)
 73042990;Casing and tubing of a kind used for drilling for oil or gas, seamless, of iron or steel, of an external diameter > 406,4 mm (excl. products of cast iron);0,057;;1,383;(C)
@@ -1514,16 +1514,16 @@ Production route indicator"
 73102990;Tanks, casks, drums, cans, boxes and similar containers, of iron or steel, for any material, of a capacity of < 50 l and of a wall thickness of >= 0,5 mm, n.e.s. (excl. containers for compressed or liquefied gas, or containers fitted with mechanical or thermal equipment, and cans which are to be closed by soldering or crimping);0,112;;1,491;(C)
 ;;;;0,567;(D)
 ;;;;0,141;(E)
-73110011;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure >=ÿ165 bar, of a capacity <ÿ20ÿl (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
+73110011;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure >=Â 165 bar, of a capacity <Â 20Â l (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
 ;;;;0,475;(D)
 ;;;;0,066;(E)
-73110013;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure >=ÿ165ÿbar, of a capacity >=ÿ20ÿl to <=ÿ50ÿl (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
+73110013;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure >=Â 165Â bar, of a capacity >=Â 20Â l to <=Â 50Â l (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
 ;;;;0,475;(D)
 ;;;;0,066;(E)
-73110019;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure >=ÿ165ÿbar, of a capacity >ÿ50ÿl (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
+73110019;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure >=Â 165Â bar, of a capacity >Â 50Â l (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
 ;;;;0,475;(D)
 ;;;;0,066;(E)
-73110030;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure <ÿ165ÿbar (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
+73110030;Containers of iron or steel, seamless, for compressed or liquefied gas, for a pressure <Â 165Â bar (excl. containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
 ;;;;0,475;(D)
 ;;;;0,066;(E)
 73110091;Containers of iron or steel, seamless, for compressed or liquefied gas, of a capacity of < 1.000 l (excl. seamless containers and containers specifically constructed or equipped for one or more types of transport);0,038;;1,364;(C)
