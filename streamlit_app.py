@@ -146,7 +146,6 @@ c3.metric("Costo CBAM Totale", f"€ {costo_totale:,.2f}")
 with st.expander("Vedi dettagli calcolo"):
     st.write(f"**Formula applicata:**")
     st.latex(r"Cost_{CBAM} = (E_{incorporated} - (BM \times FA\%)) \times Volume \times Price_{ETS}")
-)
 
 
 
