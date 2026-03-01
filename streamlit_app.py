@@ -1,118 +1,147 @@
 import streamlit as st
 import pandas as pd
-import re
+import numpy as np
 
-# Configurazione
-st.set_page_config(page_title="CBAM Pro Calculator", layout="wide")
-st.title("🛡️ CBAM Pro - Calcolatore Certificati")
+# Configurazione Pagina
+st.set_page_config(page_title="Calcolatore CBAM", layout="wide")
 
-def clean_val(val):
-    if pd.isna(val) or str(val).strip().lower() in ["", "n/a", "nan"]:
-        return None
-    try:
-        # Toglie note tra parentesi ed estrae il numero
-        s = str(val).split('(')[0].strip()
-        return float(s.replace(',', '.'))
-    except:
-        return None
+# Funzione per pulizia numerica
+def clean_numeric(val):
+    if pd.isna(val) or val == '' or val == '#VALUE!':
+        return np.nan
+    if isinstance(val, str):
+        val = val.strip().replace(',', '.')
+        try:
+            return float(val)
+        except ValueError:
+            return np.nan
+    return float(val)
 
-# Caricamento dati
 @st.cache_data
 def load_data():
-    # Nota: Assicurati di aver caricato questi file su GitHub con questi nomi esatti
-    df_bench = pd.read_csv('benchmarks(1).csv')
-    df_def = pd.read_csv('defaults(1).csv')
-    return df_bench, df_def
-
-try:
-    df_bench, df_def = load_data()
-except Exception as e:
-    st.error(f"⚠️ Errore caricamento file: {e}")
-    st.stop()
-
-# --- SIDEBAR: SETTAGGI ---
-st.sidebar.header("Parametri di Mercato")
-anno = st.sidebar.selectbox("Seleziona Anno", [2026, 2027, 2028])
-prezzo_ets = st.sidebar.number_input("Prezzo Certificato ETS (€)", value=81.0)
-
-# Mappatura Colonne e Allowance (D6)
-# Col H = 2026, Col I = 2027, Col J = 2028 (nella tua tabella L)
-map_col = {2026: "2026 Default Value (Including mark-up)", 
-           2027: "2027 Default Value (Including mark-up)", 
-           2028: "2028 Default Value (Including mark-up)"}
-map_allowance = {2026: 0.975, 2027: 0.95, 2028: 0.90}
-
-target_col = map_col[anno]
-free_allowance = map_allowance[anno]
-
-# --- MAIN ---
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("1. Prodotto e Benchmark")
-    hs_input = st.text_input("Inserisci Codice HS (es. 7203 o 72024910)", "7203")
-    volume = st.number_input("Tonnellate Importate", value=150.0)
-
-    # Ricerca Benchmark (D5) - Cerchiamo il match più lungo possibile
-    bench_match = df_bench[df_bench['CN code'].astype(str).str.startswith(hs_input)].head(1)
-    if bench_match.empty and len(hs_input) > 4:
-         bench_match = df_bench[df_bench['CN code'].astype(str).str.startswith(hs_input[:4])].head(1)
+    # Caricamento Benchmarks
+    bench = pd.read_csv("benchmarks final.csv", sep=";")
+    bench['CN code'] = bench['CN code'].ffill().astype(str).str.replace('.0', '', regex=False)
+    bench['CN Description'] = bench['CN Description'].ffill()
     
-    if not bench_match.empty:
-        benchmark_val = clean_val(bench_match.iloc[0]['Benchmark_Value'])
-        st.success(f"Benchmark (D5) rilevato: **{benchmark_val}**")
-    else:
-        benchmark_val = st.number_input("Inserisci Benchmark (D5) manuale", value=1.142)
-
-with col2:
-    st.subheader("2. Paese e Emissioni")
-    usa_default = st.toggle("Usa Valori di Default (D4)", value=True)
+    for col in ['Column A\nBMg [tCO2e/t]', 'Column B\nBMg [tCO2e/t]']:
+        bench[col] = bench[col].apply(clean_numeric)
     
-    if usa_default:
-        paesi = sorted(df_def['Country'].unique())
-        paese_scelto = st.selectbox("Paese di Origine", paesi, index=paesi.index("China") if "China" in paesi else 0)
+    # Caricamento Defaults
+    defaults = pd.read_csv("cbam defaults.xlsx - cbam defaults.csv")
+    defaults['Product CN Code'] = defaults['Product CN Code'].astype(str).str.replace('.0', '', regex=False)
+    
+    val_cols = ['2026 Default Value (Including mark-up)', 
+                '2027 Default Value (Including mark-up)', 
+                '2028 Default Value (Including mark-up)']
+    for col in val_cols:
+        defaults[col] = defaults[col].apply(clean_numeric)
         
-        # LOGICA RICHIESTA: Cerca Paese -> Se Vuoto -> Cerca Other Countries
-        def find_default(p, hs):
-            # Prova match esatto o parent (4 cifre)
-            hs_short = hs[:4]
-            rows = df_def[(df_def['Country'] == p) & (df_def['Product CN Code'].astype(str).str.startswith(hs_short))]
-            val = None
-            if not rows.empty:
-                val = clean_val(rows.iloc[0][target_col])
-            
-            # Se ancora nullo, usa Other Countries
-            if val is None:
-                st.warning(f"Dato mancante per {p}. Utilizzo valore 'Other Countries'...")
-                rows_other = df_def[(df_def['Country'].str.contains("Other", na=False)) & (df_def['Product CN Code'].astype(str).str.startswith(hs_short))]
-                if not rows_other.empty:
-                    val = clean_val(rows_other.iloc[0][target_col])
-            return val
+    return bench, defaults
 
-        emissioni_d4 = find_default(paese_scelto, hs_input)
-        if emissioni_d4 is None: emissioni_d4 = 1.325 # Fallback finale
-        st.info(f"Default (D4) applicato: **{emissioni_d4}**")
-    else:
-        emissioni_d4 = st.number_input("Inserisci Emissioni Reali (D4)", value=1.5)
+bench_df, def_df = load_data()
 
-# --- CALCOLO FINALE ---
-# Formula: (D4 - (D5 * D6)) * D8
-differenziale = emissioni_d4 - (benchmark_val * free_allowance)
-costo_ton = max(0.0, differenziale * prezzo_ets)
-totale_euro = costo_ton * volume
+st.title("🛡️ Calcolatore Emissioni CBAM")
 
-# --- RISULTATI ---
+# --- Sidebar Input ---
+st.sidebar.header("Parametri di Input")
+anno = st.sidebar.selectbox("Anno di riferimento", [2026, 2027, 2028, 2029, 2030])
+periodo = "(1)" if anno <= 2027 else "(2)"
+
+paesi = sorted(def_df['Country'].unique())
+paese_origine = st.sidebar.selectbox("Paese di Origine", paesi)
+
+codici_hs = sorted(bench_df['CN code'].unique())
+hs_code = st.sidebar.selectbox("Codice HS (CN Code)", codici_hs)
+
+volume = st.sidebar.number_input("Volume importato (Ton)", min_value=0.0, value=1.0, step=0.1)
+emissioni_reali = st.sidebar.number_input("Emissioni Reali Dirette (tCO2e/t)", min_value=0.0, value=0.0, format="%.4f")
+
+prezzo_ets = st.sidebar.number_input("Prezzo Medio ETS (€/tCO2)", min_value=0.0, value=75.0)
+# Default Free Allowance (es. 2026 = 97.5%)
+fa_default = 97.5 if anno <= 2026 else (95.0 if anno == 2027 else 92.5)
+free_allowance_perc = st.sidebar.number_input("Free Allowance (%)", min_value=0.0, max_value=100.0, value=fa_default)
+
+# --- Logica di Calcolo ---
+
+# 1. Determinazione Emissioni da usare
+is_real = emissioni_reali > 0
+if is_real:
+    emissioni_finali = emissioni_reali
+    tipo_dato = "Reale"
+    col_bench = 'Column A\nBMg [tCO2e/t]'
+    col_ind = 'Column A\nProduction route indicator'
+else:
+    tipo_dato = "Default"
+    col_bench = 'Column B\nBMg [tCO2e/t]'
+    col_ind = 'Column B\nProduction route indicator'
+    
+    # Ricerca valore di default
+    default_year_col = f"{min(anno, 2028)} Default Value (Including mark-up)"
+    row_def = def_df[(def_df['Product CN Code'] == hs_code) & (def_df['Country'] == paese_origine)]
+    
+    val_def = np.nan
+    if not row_def.empty:
+        val_def = row_def.iloc[0][default_year_col]
+        
+    if pd.isna(val_def):
+        # Fallback su "Other Countries"
+        row_other = def_df[(def_df['Product CN Code'] == hs_code) & (def_df['Country'].str.contains("Other", na=False))]
+        if not row_other.empty:
+            val_def = row_other.iloc[0][default_year_col]
+            st.info(f"Valore per {paese_origine} non trovato. Utilizzato valore 'Other Countries'.")
+    
+    emissioni_finali = val_def if not pd.isna(val_def) else 0.0
+
+# 2. Selezione Benchmark e Rotta
+filtro_hs = bench_df[bench_df['CN code'] == hs_code]
+
+# Filtriamo per periodo (1) o (2) se presente nell'indicatore
+# Nota: se l'indicatore è (F)(1), cerchiamo la stringa "(1)"
+def filter_period(row, col):
+    ind = str(row[col])
+    if periodo in ind: return True
+    if "(1)" not in ind and "(2)" not in ind: return True # Se non ha periodo, vale per tutti
+    return False
+
+opzioni_bench = filtro_hs[filtro_hs.apply(lambda r: filter_period(r, col_ind), axis=1)]
+
+# Gestione Rotte di Produzione (C, D, E...)
+rotta_selezionata = None
+if len(opzioni_bench) > 1:
+    rotte = []
+    for idx, row in opzioni_bench.iterrows():
+        ind = str(row[col_ind])
+        # Estraiamo la lettera tra parentesi se esiste
+        import re
+        match = re.search(r'\(([A-Z])\)', ind)
+        lettera = match.group(1) if match else f"Opzione {idx}"
+        rotte.append(lettera)
+    
+    rotta_scelta = st.selectbox("Seleziona Rotta di Produzione (Production Route)", rotte)
+    # Troviamo la riga corrispondente
+    idx_scelta = rotte.index(rotta_scelta)
+    benchmark_val = opzioni_bench.iloc[idx_scelta][col_bench]
+else:
+    benchmark_val = opzioni_bench[col_bench].iloc[0] if not opzioni_bench.empty else 0.0
+
+# --- Calcoli Finali ---
+free_allowance_factor = free_allowance_perc / 100.0
+# Formula: (Emissioni - (Benchmark * FA)) * Prezzo
+tco2_soggette = max(0, emissioni_finali - (benchmark_val * free_allowance_factor))
+costo_unitario = tco2_soggette * prezzo_ets
+costo_totale = costo_unitario * volume
+
+# --- Visualizzazione Risultati ---
+col1, col2, col3 = st.columns(3)
+col1.metric("Emissioni Applicate", f"{emissioni_finali:.4f} tCO2/t", f"Tipo: {tipo_dato}")
+col2.metric("Benchmark", f"{benchmark_val:.4f} tCO2/t")
+col3.metric("Costo Totale Stimato", f"€ {costo_totale:,.2f}")
+
 st.divider()
-c1, c2, c3 = st.columns(3)
-
-def f_it(n): return f"{n:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-
-c1.metric("Costo per Ton", f"{f_it(costo_ton)} €")
-c2.metric("TOTALE DA PAGARE", f"{f_it(totale_euro)} €")
-c3.metric("Impatto Carbonio", f"{differenziale:.3f} tCO2/t")
-
-st.info(f"💡 Nel **{anno}**, la quota gratuita (Free Allowance) è del **{free_allowance*100}%**. Il calcolo utilizza la colonna del database: *{target_col}*.")
-
-
-
-
+st.subheader("Dettagli del Calcolo")
+det_data = {
+    "Descrizione": ["Codice HS", "Paese", "Volume", "Emissioni Incorporate", "Benchmark Applicato", "Free Allowance (%)", "Quota Emissioni Pagabili", "Costo per Ton"],
+    "Valore": [hs_code, paese_origine, f"{volume} t", f"{emissioni_finali:.4f}", f"{benchmark_val:.4f}", f"{free_allowance_perc}%", f"{tco2_soggette:.4f}", f"€ {costo_unitario:.2f}"]
+}
+st.table(pd.DataFrame(det_data))
