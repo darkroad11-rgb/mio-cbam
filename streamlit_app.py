@@ -86,10 +86,12 @@ with st.sidebar:
     
     paese = st.selectbox("Paese di Origine", sorted(defaults['Country'].unique()))
     # Filtriamo i codici HS per quelli effettivamente presenti
-    lista_hs = sorted([x for x in bench[HS_B].unique() if x != 'nan'])
+    lista_hs = sorted([x for x in bench[HS_B].unique() if str(x) != 'nan'])
     codice_hs = st.selectbox("Codice HS Prodotto", lista_hs)
     
-    vol = st.number_input("Volume Importato (Ton)", min_value=0.0, value=1.
+    vol = st.number_input("Volume Importato (Ton)", min_value=0.0, value=1.0)
+    reali = st.number_input("Emissioni Reali Dirette (tCO2/t) [0 = Usa Default]", min_value=0.0, format="%.4f")
+
 
 
 
