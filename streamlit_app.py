@@ -1,150 +1,136 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
 import re
 
-st.set_page_config(page_title="CBAM Calculator Pro", layout="wide")
+st.set_page_config(page_title="CBAM Calculator", layout="wide")
 
-def clean_val(val):
-    if pd.isna(val) or val == '' or str(val).strip() == '#VALUE!':
+# Funzione per pulire i numeri (gestisce virgole e valori d'errore Excel)
+def clean_numeric(val):
+    if pd.isna(val) or val == "" or str(val).strip() == "#VALUE!":
         return np.nan
     if isinstance(val, str):
-        val = val.strip().replace(',', '.')
+        val = val.strip().replace(",", ".")
         try:
             return float(val)
-        except:
+        except ValueError:
             return np.nan
     return float(val)
 
 @st.cache_data
-def load_all_data():
-    # Benchmark: delimitatore ;
-    bm = pd.read_csv("benchmarks final.csv", sep=";")
-    bm['CN code'] = bm['CN code'].ffill().astype(str).str.replace(r'\.0$', '', regex=True)
-    bm['CN Description'] = bm['CN Description'].ffill()
-    
-    # Defaults: delimitatore ,
-    df_def = pd.read_csv("cbam defaults.xlsx - cbam defaults.csv")
-    df_def['Product CN Code'] = df_def['Product CN Code'].astype(str).str.replace(r'\.0$', '', regex=True)
-    
-    # Pulizia colonne numeriche
-    for col in [c for c in bm.columns if 'BMg' in c]:
-        bm[col] = bm[col].apply(clean_val)
-    
-    val_cols = ['2026 Default Value (Including mark-up)', 
-                '2027 Default Value (Including mark-up)', 
-                '2028 Default Value (Including mark-up)']
-    for col in val_cols:
-        df_def[col] = df_def[col].apply(clean_val)
+def load_data():
+    # Nomi dei file (assicurati che siano corretti nella tua cartella)
+    file_bench = "benchmarks.csv" 
+    file_defaults = "defaults.csv"
+
+    # Verifica se i file esistono per evitare l'errore che hai visto
+    if not os.path.exists(file_bench) or not os.path.exists(file_defaults):
+        st.error(f"⚠️ File non trovati! Assicurati di aver caricato '{file_bench}' e '{file_defaults}'")
+        st.stop()
+
+    # Caricamento Benchmarks
+    bench = pd.read_csv(file_bench, sep=";")
+    bench['CN code'] = bench['CN code'].ffill().astype(str).str.replace(r'\.0$', '', regex=True)
+    bench['CN Description'] = bench['CN Description'].ffill()
+    for col in ['Column A\nBMg [tCO2e/t]', 'Column B\nBMg [tCO2e/t]']:
+        bench[col] = bench[col].apply(clean_numeric)
+
+    # Caricamento Defaults
+    defaults = pd.read_csv(file_defaults)
+    defaults['Product CN Code'] = defaults['Product CN Code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    for col in ['2026 Default Value (Including mark-up)', '2027 Default Value (Including mark-up)', '2028 Default Value (Including mark-up)']:
+        defaults[col] = defaults[col].apply(clean_numeric)
         
-    return bm, df_def
+    return bench, defaults
 
-bench_df, def_df = load_all_data()
+# --- INTERFACCIA ---
+st.title("🛡️ Calcolatore Emissioni CBAM")
 
-st.title("📊 Calcolatore CBAM Avanzato")
+bench_df, def_df = load_data()
 
-# --- UI SIDEBAR ---
 with st.sidebar:
-    st.header("1. Parametri Generali")
-    anno = st.slider("Anno di riferimento", 2026, 2030, 2026)
-    periodo_key = "(1)" if anno <= 2027 else "(2)"
+    st.header("Configurazione")
+    anno = st.selectbox("Anno di riferimento", [2026, 2027, 2028, 2029, 2030])
+    periodo = "(1)" if anno <= 2027 else "(2)"
     
-    st.header("2. Dati Prodotto")
-    codici_hs = sorted(bench_df['CN code'].unique())
-    hs_scelto = st.selectbox("Codice HS (CN Code)", codici_hs)
+    paese = st.selectbox("Paese di Origine", sorted(def_df['Country'].unique()))
+    hs_code = st.selectbox("Codice HS", sorted(bench_df['CN code'].unique()))
     
-    paesi = sorted(def_df['Country'].unique())
-    paese_scelto = st.selectbox("Paese di Origine", paesi)
+    volume = st.number_input("Volume Importato (Ton)", min_value=0.0, value=1.0)
+    emissioni_reali = st.number_input("Emissioni Reali Dirette (tCO2e/t) - (Lascia 0 se non le hai)", min_value=0.0, value=0.0, format="%.4f")
+
+# --- LOGICA CORE ---
+
+# 1. Emissioni Reali o Default
+usare_reali = emissioni_reali > 0
+col_bench = 'Column A\nBMg [tCO2e/t]' if usare_reali else 'Column B\nBMg [tCO2e/t]'
+col_route = 'Column A\nProduction route indicator' if usare_reali else 'Column B\nProduction route indicator'
+
+# 2. Ricerca Emissioni di Default (se emissioni_reali == 0)
+valore_emissioni = emissioni_reali
+if not usare_reali:
+    col_anno_def = f"{min(anno, 2028)} Default Value (Including mark-up)"
+    # Filtro per paese e codice
+    mask = (def_df['Product CN Code'] == hs_code) & (def_df['Country'] == paese)
+    row_def = def_df[mask]
     
-    volume = st.number_input("Volume (Ton)", min_value=0.0, value=1.0)
+    val_def = row_def[col_anno_def].iloc[0] if not row_def.empty else np.nan
     
-    st.header("3. Emissioni Reali")
-    usa_reali = st.checkbox("Ho dati sulle emissioni reali", value=True)
-    emissioni_input = 0.0
-    if usa_reali:
-        emissioni_input = st.number_input("Emissioni Reali (tCO2e/t)", min_value=0.0, format="%.4f")
+    # SE VUOTO -> Cerca Other Countries (come richiesto)
+    if pd.isna(val_def):
+        st.info(f"Dati non presenti per {paese}. Ricerca in 'Other Countries'...")
+        other_mask = (def_df['Product CN Code'] == hs_code) & (def_df['Country'].str.contains("Other", case=False, na=False))
+        row_other = def_df[other_mask]
+        val_def = row_other[col_anno_def].iloc[0] if not row_other.empty else 0.0
+    
+    valore_emissioni = val_def
 
-# --- LOGICA DI CALCOLO ---
+# 3. Selezione Benchmark e Production Route (Gestione Lettere C, D, E...)
+filtro_bench = bench_df[bench_df['CN code'] == hs_code]
 
-# Selezione Benchmark (Colonna A se reali, B se default)
-col_val = 'Column A\nBMg [tCO2e/t]' if usa_reali else 'Column B\nBMg [tCO2e/t]'
-col_ind = 'Column A\nProduction route indicator' if usa_reali else 'Column B\nProduction route indicator'
-
-rows_hs = bench_df[bench_df['CN code'] == hs_scelto]
-
-# Filtro per Periodo (1) o (2)
-def filter_period(val):
-    val = str(val)
-    if periodo_key in val: return True
-    if "(1)" not in val and "(2)" not in val: return True
+# Filtro per periodo (1) o (2) se l'indicatore lo specifica (es. (F)(1))
+def check_period(ind):
+    ind = str(ind)
+    if periodo in ind: return True
+    if "(1)" not in ind and "(2)" not in ind: return True
     return False
 
-rows_periodo = rows_hs[rows_hs[col_ind].apply(filter_period)]
+opzioni_valide = filtro_bench[filtro_bench[col_route].apply(check_period)]
 
-# Gestione Rotte di Produzione
-if len(rows_periodo) > 1:
-    options = []
-    for idx, r in rows_periodo.iterrows():
-        ind = str(r[col_ind])
-        match = re.search(r'\(([A-Z])\)', ind)
-        label = match.group(1) if match else f"Opzione {idx}"
-        options.append((label, idx))
+# Se ci sono più righe (Production Routes diverse), chiedi all'utente
+if len(opzioni_valide) > 1:
+    st.warning("🔎 Trovate più rotte di produzione per questo codice. Seleziona quella corretta:")
+    mappa_rotte = {}
+    for idx, r in opzioni_valide.iterrows():
+        label = str(r[col_route]) if pd.notna(r[col_route]) else f"Default (Riga {idx})"
+        mappa_rotte[label] = r[col_bench]
     
-    scelta_label = st.selectbox("Seleziona Rotta di Produzione (Indicator)", [o[0] for o in options])
-    idx_final = [o[1] for o in options if o[0] == scelta_label][0]
-    row_bm = rows_periodo.loc[idx_final]
+    rotta_scelta = st.selectbox("Production Route", list(mappa_rotte.keys()))
+    valore_benchmark = mappa_rotte[rotta_scelta]
 else:
-    row_bm = rows_periodo.iloc[0] if not rows_periodo.empty else None
+    valore_benchmark = opzioni_valide[col_bench].iloc[0] if not opzioni_valide.empty else 0.0
 
-benchmark_val = row_bm[col_val] if row_bm is not None else 0.0
-
-# Gestione Emissioni (Se non reali, cerca nei default)
-emissioni_finali = emissioni_input
-if not usa_reali:
-    col_anno_def = f"{min(anno, 2028)} Default Value (Including mark-up)"
-    # Cerca per Paese + HS
-    def_row = def_df[(def_df['Product CN Code'] == hs_scelto) & (def_df['Country'] == paese_scelto)]
-    
-    val_found = np.nan
-    if not def_row.empty:
-        val_found = def_row.iloc[0][col_anno_def]
-    
-    # Se vuoto o non trovato, cerca in Other Countries
-    if pd.isna(val_found):
-        other_row = def_df[(def_df['Product CN Code'] == hs_scelto) & (def_df['Country'].str.contains("Other", na=False))]
-        if not other_row.empty:
-            val_found = other_row.iloc[0][col_anno_def]
-            st.warning(f"Dati non trovati per {paese_scelto}. Usato valore 'Other Countries'.")
-        else:
-            # Prova a cercare con le prime 4 cifre del codice HS se ancora non trovato
-            short_hs = hs_scelto[:4]
-            fallback_row = def_df[(def_df['Product CN Code'].str.startswith(short_hs)) & (def_df['Country'].str.contains("Other", na=False))]
-            if not fallback_row.empty:
-                val_found = fallback_row.iloc[0][col_anno_def]
-                st.info(f"Usato valore generico per categoria HS {short_hs}.")
-
-    emissioni_finali = val_found if not pd.isna(val_found) else 0.0
-
-# --- OUTPUT ---
+# --- RISULTATI ---
 st.divider()
 c1, c2, c3 = st.columns(3)
 
+# Calcolo Free Allowance (Esempio semplificato: 97.5% per 2026)
+fa_perc = 97.5 if anno <= 2026 else 95.0
+prezzo_ets = 80.0 # Prezzo ipotetico certificates
+quota_pagabile = max(0, valore_emissioni - (valore_benchmark * fa_perc / 100))
+costo_totale = quota_pagabile * volume * prezzo_ets
+
 with c1:
-    st.metric("Emissioni Applicate", f"{emissioni_finali:.4f} tCO2/t")
-    st.caption("Dato " + ("Reale" if usa_reali else "Default"))
+    st.metric("Emissioni Applicate", f"{valore_emissioni:.4f} tCO2/t")
+    st.caption("Dato " + ("Reale" if usare_reali else "Default"))
 
 with c2:
-    st.metric("Benchmark CBAM", f"{benchmark_val:.4f} tCO2/t")
-    st.caption(f"Periodo {periodo_key}")
-
-# Calcolo semplificato (Esempio: Prezzo ETS 80€, Free Allowance 97.5% per il 2026)
-fa_perc = 97.5 if anno <= 2026 else 95.0 # Valori indicativi
-prezzo_ets = 80.0
-quota_pagabile = max(0, emissioni_finali - (benchmark_val * fa_perc / 100))
-costo_tot = quota_pagabile * volume * prezzo_ets
+    st.metric("Benchmark", f"{valore_benchmark:.4f} tCO2/t")
+    st.caption(f"Basato su Colonna {'A' if usare_reali else 'B'}")
 
 with c3:
-    st.metric("Costo Stimato Certificati", f"€ {costo_tot:,.2f}")
+    st.metric("Costo Stimato", f"€ {costo_totale:,.2f}")
+    st.caption(f"Volume: {volume} Ton")
 
-if row_bm is not None:
-    st.success(f"Prodotto Identificato: **{row_bm['CN Description']}**")
+st.info(f"**Descrizione:** {filtro_bench['CN Description'].iloc[0]}")
