@@ -1,166 +1,162 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
 import re
 
-# Configurazione Pagina
-st.set_page_config(page_title="Calcolatore CBAM", layout="wide")
+st.set_page_config(page_title="CBAM Professional Calculator", layout="wide")
 
-# Funzione per pulizia numerica (gestisce virgole e errori Excel)
-def clean_numeric(val):
-    if pd.isna(val) or val == '' or str(val).strip() == '#VALUE!':
+# --- FUNZIONI DI SUPPORTO ---
+
+def pulisci_numero(val):
+    """Converte stringhe con virgole o errori Excel in numeri validi."""
+    if pd.isna(val) or str(val).strip() in ["", "#VALUE!", "nan", "NaN"]:
         return np.nan
     if isinstance(val, str):
-        val = val.strip().replace(',', '.')
+        val = val.strip().replace(",", ".")
+        # Rimuove eventuali caratteri non numerici residui
+        val = re.sub(r'[^\d.-]', '', val)
         try:
             return float(val)
-        except ValueError:
+        except:
             return np.nan
     return float(val)
 
 @st.cache_data
 def load_data():
-    # Caricamento Benchmarks (delimitatore ;)
-    bench = pd.read_csv("benchmarks final.csv", sep=";")
-    bench['CN code'] = bench['CN code'].ffill().astype(str).str.replace(r'\.0$', '', regex=True)
-    bench['CN Description'] = bench['CN Description'].ffill()
-    
-    for col in ['Column A\nBMg [tCO2e/t]', 'Column B\nBMg [tCO2e/t]']:
-        bench[col] = bench[col].apply(clean_numeric)
-    
-    # Caricamento Defaults (delimitatore ,)
-    defaults = pd.read_csv("cbam defaults.xlsx - cbam defaults.csv")
-    defaults['Product CN Code'] = defaults['Product CN Code'].astype(str).str.replace(r'\.0$', '', regex=True)
-    
-    val_cols = ['2026 Default Value (Including mark-up)', 
-                '2027 Default Value (Including mark-up)', 
-                '2028 Default Value (Including mark-up)']
-    for col in val_cols:
-        defaults[col] = defaults[col].apply(clean_numeric)
-        
-    return bench, defaults
+    """Cerca i file CSV nella cartella e li carica."""
+    files = os.listdir(".")
+    f_bench = next((f for f in files if "benchmarks" in f.lower() and f.endswith(".csv")), None)
+    f_def = next((f for f in files if "defaults" in f.lower() and f.endswith(".csv")), None)
 
-# Caricamento dati
+    if not f_bench or not f_def:
+        st.error(f"❌ File non trovati! Assicurati di avere i file CSV nella cartella. Rilevati: {files}")
+        st.stop()
+
+    # Caricamento Benchmarks (Semicolon)
+    df_b = pd.read_csv(f_bench, sep=";", engine='python', on_bad_lines='skip')
+    df_b.columns = [c.replace("\n", " ").strip() for c in df_b.columns]
+    
+    # Caricamento Defaults (Comma)
+    df_d = pd.read_csv(f_def, sep=",", engine='python', on_bad_lines='skip')
+    df_d.columns = [c.strip() for c in df_d.columns]
+
+    # Pulizia codici HS (gestione celle unite Excel)
+    col_hs_b = next(c for c in df_b.columns if "CN code" in c)
+    df_b[col_hs_b] = df_b[col_hs_b].ffill().astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    
+    col_hs_d = next(c for c in df_d.columns if "CN Code" in c)
+    df_d[col_hs_d] = df_d[col_hs_d].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+    return df_b, df_d, col_hs_b, col_hs_d
+
+# --- AVVIO APPLICAZIONE ---
+
 try:
-    bench_df, def_df = load_data()
+    bench, defaults, HS_B, HS_D = load_data()
 except Exception as e:
-    st.error(f"Errore nel caricamento dei file: {e}. Assicurati che i file siano presenti nella cartella.")
+    st.error(f"Errore critico all'avvio: {e}")
     st.stop()
 
-st.title("🛡️ Calcolatore Emissioni e Costi CBAM")
+st.title("🛡️ CBAM Professional Calculator")
 
-# --- Sidebar Input ---
-st.sidebar.header("Parametri di Input")
-anno = st.sidebar.selectbox("Anno di riferimento", [2026, 2027, 2028, 2029, 2030])
-periodo_req = "(1)" if anno <= 2027 else "(2)"
-
-paesi = sorted(def_df['Country'].unique())
-paese_origine = st.sidebar.selectbox("Paese di Origine", paesi)
-
-codici_hs = sorted(bench_df['CN code'].unique())
-hs_code = st.sidebar.selectbox("Codice HS (CN Code)", codici_hs)
-
-volume = st.sidebar.number_input("Volume importato (Ton)", min_value=0.0, value=1.0, step=0.1)
-emissioni_reali = st.sidebar.number_input("Emissioni Reali Dirette (tCO2e/t)", 
-                                         min_value=0.0, value=0.0, format="%.4f",
-                                         help="Lascia 0 se vuoi usare i valori di default per il paese")
-
-prezzo_ets = st.sidebar.number_input("Prezzo Medio ETS (€/tCO2)", min_value=0.0, value=75.0)
-
-# Default Free Allowance (es. 2026 = 97.5%)
-fa_default = 97.5 if anno <= 2026 else (95.0 if anno == 2027 else 92.5)
-free_allowance_perc = st.sidebar.number_input("Free Allowance (%)", min_value=0.0, max_value=100.0, value=fa_default)
-
-# --- Logica di Calcolo ---
-
-# 1. Determinazione Emissioni e Benchmark da usare
-is_real = emissioni_reali > 0
-if is_real:
-    emissioni_applicate = emissioni_reali
-    col_bench = 'Column A\nBMg [tCO2e/t]'
-    col_ind = 'Column A\nProduction route indicator'
-    tipo_dato = "Reale (Utente)"
-else:
-    col_bench = 'Column B\nBMg [tCO2e/t]'
-    col_ind = 'Column B\nProduction route indicator'
-    tipo_dato = "Default (Database)"
+# --- SIDEBAR: INPUT UTENTE ---
+with st.sidebar:
+    st.header("1. Parametri di Calcolo")
+    anno = st.selectbox("Anno di riferimento", [2026, 2027, 2028, 2029, 2030])
+    periodo_req = "(1)" if anno <= 2027 else "(2)"
     
-    # Ricerca valore di default nel database
-    col_anno_def = f"{min(anno, 2028)} Default Value (Including mark-up)"
-    row_def = def_df[(def_df['Product CN Code'] == hs_code) & (def_df['Country'] == paese_origine)]
+    paese_origine = st.selectbox("Paese di Origine", sorted(defaults['Country'].unique()))
+    codice_hs = st.selectbox("Codice HS Prodotto", sorted(bench[HS_B].unique()))
     
-    val_def = np.nan
-    if not row_def.empty:
-        val_def = row_def.iloc[0][col_anno_def]
-        
-    if pd.isna(val_def):
-        # Fallback su "Other Countries" se il dato è vuoto o il paese non esiste
-        row_other = def_df[(def_df['Product CN Code'] == hs_code) & (def_df['Country'].str.contains("Other", case=False, na=False))]
-        if not row_other.empty:
-            val_def = row_other.iloc[0][col_anno_def]
-            st.warning(f"Dati non trovati per {paese_origine}. Utilizzato valore di default per 'Other Countries'.")
-        else:
-            val_def = 0.0
-            st.error("Nessun dato di default trovato per questo codice HS.")
-    
-    emissioni_applicate = val_def
+    tonnellate = st.number_input("Volume Importato (Ton)", min_value=0.0, value=1.0, step=0.1)
+    reali_input = st.number_input("Emissioni Reali Dirette (tCO2e/t)", 
+                                  min_value=0.0, value=0.0, format="%.4f", 
+                                  help="Lascia 0 per usare i valori di default")
 
-# 2. Selezione Benchmark e Rotta di Produzione
-filtro_hs = bench_df[bench_df['CN code'] == hs_code]
+    st.header("2. Mercato ETS")
+    prezzo_ets = st.number_input("Prezzo ETS Medio (€/tCO2)", value=80.0)
+    # Calcolo Free Allowance stima
+    fa_stima = 97.5 if anno <= 2026 else (95.0 if anno == 2027 else 92.5)
+    free_allowance = st.slider("Free Allowance (%)", 0.0, 100.0, fa_stima)
 
-# Funzione per filtrare per periodo (1) o (2)
-def filter_period(row, col):
-    ind = str(row[col])
-    if periodo_req in ind: return True
-    # Se non c'è indicatore di periodo, si assume valido per entrambi
-    if "(1)" not in ind and "(2)" not in ind: return True
+# --- LOGICA DI CALCOLO ---
+
+# Selezione Colonna A (Dati Reali) o B (Default)
+usare_reali = reali_input > 0
+prefisso = "Column A" if usare_reali else "Column B"
+
+# Identificazione colonne BMg e Indicator per la colonna scelta
+col_bmg = next(c for c in bench.columns if prefisso in c and "BMg" in c)
+col_ind = next(c for c in bench.columns if prefisso in c and "indicator" in c)
+
+# Filtro Benchmark per HS e Periodo (1) 2026-27 o (2) 2028-30
+df_prodotto = bench[bench[HS_B] == codice_hs].copy()
+
+def matches_period(val):
+    v = str(val)
+    if periodo_req in v: return True
+    if "(1)" not in v and "(2)" not in v: return True
     return False
 
-opzioni_bench = filtro_hs[filtro_hs.apply(lambda r: filter_period(r, col_ind), axis=1)]
+df_valido = df_prodotto[df_prodotto[col_ind].apply(matches_period)]
 
-benchmark_val = 0.0
-if len(opzioni_bench) > 1:
-    st.info(f"Sono presenti più rotte di produzione per il codice {hs_code}. Seleziona quella corretta:")
-    rotte_disponibili = []
-    for idx, row in opzioni_bench.iterrows():
-        ind = str(row[col_ind])
-        # Estrae la lettera della rotta (C, D, E...)
-        match = re.search(r'\(([A-Z])\)', ind)
-        label = match.group(0) if match else f"Opzione {idx}"
-        rotte_disponibili.append((label, row[col_bench]))
+# Gestione Rotte di Produzione (Scelta C, D, E...)
+benchmark_applicato = 0.0
+if len(df_valido) > 1:
+    st.warning(f"Rotte di produzione multiple rilevate per {codice_hs}")
+    mappa_rotte = {}
+    for _, r in df_valido.iterrows():
+        label = str(r[col_ind]) if pd.notna(r[col_ind]) and str(r[col_ind]).strip() != "" else "Default"
+        mappa_rotte[label] = pulisci_numero(r[col_bmg])
     
-    rotta_scelta = st.selectbox("Rotta di Produzione (Production Route)", [r[0] for r in rotte_disponibili])
-    benchmark_val = next(r[1] for r in rotte_disponibili if r[0] == rotta_scelta)
-elif not opzioni_bench.empty:
-    benchmark_val = opzioni_bench.iloc[0][col_bench]
+    scelta_rotta = st.selectbox("Seleziona la Rotta di Produzione (Production Route):", list(mappa_rotte.keys()))
+    benchmark_applicato = mappa_rotte[scelta_rotta]
 else:
-    st.error("Benchmark non trovato per questo codice HS.")
+    benchmark_applicato = pulisci_numero(df_valido[col_bmg].iloc[0]) if not df_valido.empty else 0.0
 
-# --- Calcoli Finali ---
-free_allowance_factor = free_allowance_perc / 100.0
-# Formula: (Emissioni - (Benchmark * FA)) * Volume * Prezzo
-emissioni_soggette = max(0, emissioni_applicate - (benchmark_val * free_allowance_factor))
-costo_totale = emissioni_soggette * volume * prezzo_ets
+# Calcolo Emissioni Applicate (Default con Fallback)
+if usare_reali:
+    emissioni_finali = reali_input
+    desc_tipo = "Dato Reale fornito"
+else:
+    # Cerca colonna anno corretta (limite 2028 nei file forniti)
+    anno_col = next(c for c in defaults.columns if str(min(anno, 2028)) in c)
+    
+    # Cerca per Paese + HS
+    row_def = defaults[(defaults[HS_D] == codice_hs) & (defaults['Country'] == paese_origine)]
+    val_def = pulisci_numero(row_def[anno_col].iloc[0]) if not row_def.empty else np.nan
+    
+    # Fallback su 'Other Countries' se il valore è vuoto (NaN)
+    if pd.isna(val_def):
+        row_other = defaults[(defaults[HS_D] == codice_hs) & (defaults['Country'].str.contains("Other", na=False))]
+        val_def = pulisci_numero(row_other[anno_col].iloc[0]) if not row_other.empty else 0.0
+        desc_tipo = "Default (Other Countries)"
+        st.info("Emissioni specifiche non trovate. Utilizzato valore 'Other Countries'.")
+    else:
+        desc_tipo = f"Default ({paese_origine})"
+    
+    emissioni_finali = val_def
 
-# --- Visualizzazione Risultati ---
+# --- RISULTATI FINALI ---
 st.divider()
-col1, col2, col3 = st.columns(3)
-col1.metric("Emissioni Applicate", f"{emissioni_applicate:.4f} tCO2/t", f"Tipo: {tipo_dato}")
-col2.metric("Benchmark di Riferimento", f"{benchmark_val:.4f} tCO2/t", f"Periodo: {periodo_req}")
-col3.metric("Costo CBAM Totale", f"€ {costo_totale:,.2f}", f"Volume: {volume} Ton")
+c1, c2, c3 = st.columns(3)
 
-st.divider()
-st.subheader("Dettagli del Prodotto")
-desc_prodotto = filtro_hs['CN Description'].iloc[0] if not filtro_hs.empty else "N/A"
-st.write(f"**Descrizione:** {desc_prodotto}")
+# Formula: (Emissioni - (Benchmark * FA%)) * Volume * Prezzo
+quota_esente = benchmark_applicato * (free_allowance / 100)
+differenza = max(0, emissioni_finali - quota_esente)
+costo_totale = differenza * tonnellate * prezzo_ets
 
-with st.expander("Vedi formula e dettagli tecnici"):
-    st.write(f"Formula applicata: `(Emissioni - (Benchmark * Free Allowance)) * Volume * Prezzo ETS` ")
-    st.write(f"- Emissioni: {emissioni_applicate:.4f}")
-    st.write(f"- Benchmark: {benchmark_val:.4f}")
-    st.write(f"- Free Allowance Factor: {free_allowance_factor:.4f}")
-    st.write(f"- Prezzo ETS: € {prezzo_ets}")
-    st.write(f"- Risultato unitario soggetto a tassazione: {emissioni_soggette:.4f} tCO2/t")
+c1.metric("Emissioni Applicate", f"{emissioni_finali:.4f} tCO2/t", desc_tipo)
+c2.metric("Benchmark (Scontato)", f"{quota_esente:.4f} tCO2/t", f"Lordo: {benchmark_applicato:.4f}")
+c3.metric("Costo Totale Stimato", f"€ {costo_totale:,.2f}", f"Su {tonnellate} t")
+
+with st.expander("Vedi dettagli tecnici"):
+    desc_merce = df_prodotto['CN Description'].iloc[0] if not df_prodotto.empty else "N/A"
+    st.write(f"**Descrizione:** {desc_merce}")
+    st.write(f"**Validità Periodo:** {periodo_req}")
+    st.write(f"**Calcolo unitario:** `({emissioni_finali:.4f} - {quota_esente:.4f}) = {differenza:.4f} tCO2/t`")
+
 
 
 
