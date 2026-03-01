@@ -20,8 +20,8 @@ def clean_val(val):
 @st.cache_data
 def load_data():
     # Nota: Assicurati di aver caricato questi file su GitHub con questi nomi esatti
-    df_bench = pd.read_csv('database_benchmarks_pulito.csv')
-    df_def = pd.read_csv('database_defaults_pulito.csv')
+    df_bench = pd.read_csv('benchmark(1).csv')
+    df_def = pd.read_csv('defaults(1).csv')
     return df_bench, df_def
 
 try:
@@ -112,5 +112,6 @@ c2.metric("TOTALE DA PAGARE", f"{f_it(totale_euro)} €")
 c3.metric("Impatto Carbonio", f"{differenziale:.3f} tCO2/t")
 
 st.info(f"💡 Nel **{anno}**, la quota gratuita (Free Allowance) è del **{free_allowance*100}%**. Il calcolo utilizza la colonna del database: *{target_col}*.")
+
 
 
